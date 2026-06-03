@@ -99,6 +99,21 @@ def _str(val) -> str:
     return str(val).strip()
 
 
+_PF_NORM = {"Write": "Report Writer"}
+
+def _norm_pf(pf: str) -> str:
+    """Normalise product name variants in product_leads and deduplicate."""
+    if not pf:
+        return pf
+    parts = [_PF_NORM.get(p.strip(), p.strip()) for p in pf.split(",") if p.strip()]
+    seen, deduped = set(), []
+    for p in parts:
+        if p not in seen:
+            seen.add(p)
+            deduped.append(p)
+    return ", ".join(deduped)
+
+
 def _flag(val) -> int:
     """Parse boolean-like Athena values (1/0, Yes/No, True/False) to 1 or 0."""
     s = _str(val).lower()
@@ -232,7 +247,7 @@ def _transform_row(row) -> dict:
         "cm":  cm,
         "lr":  "",
         "lcr": "",
-        "pf":  _str(row["product_leads"]),
+        "pf":  _norm_pf(_str(row["product_leads"])),
         "fc":  _str(row["forecast_category"]),
         "ind": _str(row["industry"]),
         "cd":  cd,
@@ -628,8 +643,9 @@ DASHBOARD_KEY      = "dnr_apps/gtm_dashboard_live.html"
 DASHBOARD_URL      = "https://d1ip2svvh07kva.cloudfront.net/dnr_apps/gtm_dashboard_live.html"
 
 def _upload_dashboard(local_path: Path) -> str:
-    """Upload the built HTML to S3 behind CloudFront and return the permanent URL."""
-    from aws_utils import get_s3_client
+    """Upload the built HTML to S3, invalidate CloudFront, and return the permanent URL."""
+    import time
+    from aws_utils import get_s3_client, _session
     s3 = get_s3_client()
     s3.put_object(
         Bucket=DASHBOARD_BUCKET,
@@ -638,6 +654,29 @@ def _upload_dashboard(local_path: Path) -> str:
         ContentType="text/html",
     )
     print(f"Uploaded -> s3://{DASHBOARD_BUCKET}/{DASHBOARD_KEY}")
+
+    cf = _session().client("cloudfront")
+    dist_id = None
+    for page in cf.get_paginator("list_distributions").paginate():
+        for dist in page["DistributionList"].get("Items", []):
+            if DASHBOARD_URL.split("/")[2] in dist.get("Aliases", {}).get("Items", []) or \
+               dist.get("DomainName", "") == DASHBOARD_URL.split("/")[2]:
+                dist_id = dist["Id"]
+                break
+        if dist_id:
+            break
+    if dist_id:
+        cf.create_invalidation(
+            DistributionId=dist_id,
+            InvalidationBatch={
+                "Paths": {"Quantity": 1, "Items": [f"/{DASHBOARD_KEY}"]},
+                "CallerReference": str(int(time.time())),
+            },
+        )
+        print(f"Cache invalidated -> /{DASHBOARD_KEY}")
+    else:
+        print("Warning: CloudFront distribution not found — clear cache manually if needed")
+
     return DASHBOARD_URL
 
 
