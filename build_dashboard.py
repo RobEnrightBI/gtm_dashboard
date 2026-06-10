@@ -99,7 +99,14 @@ def _str(val) -> str:
     return str(val).strip()
 
 
-_PF_NORM = {"Write": "Report Writer"}
+_PF_NORM = {
+    "Write":             "Report Writer",
+    "ReportWriter":      "Report Writer",
+    "AdvisoryServices":  "Advisory",
+    "Board Development": "Board Dev",
+    "ID":                "Insight Driver",
+    "AIA":               "AI Advisor",
+}
 
 def _norm_pf(pf: str) -> str:
     """Normalise product name variants in product_leads and deduplicate."""
